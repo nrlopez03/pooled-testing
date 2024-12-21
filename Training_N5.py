@@ -1202,6 +1202,7 @@ def train_RL_model(model, optimizer, training_data, num_epochs, lr, beta, beta_d
 
              # Forward pass: predict probabilities for the boolean list
             predicted_probabilities = model(input_data)
+            predicted_probabilities = torch.clamp(predicted_probabilities, 0.0, 1.0)
 
             # Sample actions based on the predicted probabilities
             m = torch.bernoulli(predicted_probabilities)
@@ -1291,6 +1292,7 @@ def evaluate_model(model, training_data):
         for agents in training_data:
             input_data = preprocess_agents(agents).unsqueeze(0)
             predicted_probabilities = model(input_data)
+            predicted_probabilities = torch.clamp(predicted_probabilities, 0.0, 1.0)
             # print("here")
             # print(torch.bernoulli(predicted_probabilities).tolist())
             # boolean_tree = boolean_list_to_tree(

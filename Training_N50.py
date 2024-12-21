@@ -1386,6 +1386,9 @@ def train_and_evaluate(params, training_data, eval_data):
     # Reinitialize the model and optimizer for each combination
     model = GroupedAgentIDModel(input_size, num_tests)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    if trial:
+      print("now train", flush=True)
     
     # Train the model
     train_RL_model(model, optimizer, training_data, num_epochs, lr, beta, beta_decay)
@@ -1407,6 +1410,9 @@ param_grid = {
 # Get all combinations of parameters
 param_combinations = list(product(*param_grid.values()))
 param_combinations = sorted(param_combinations, key=lambda x: x[2])
+
+if trial:
+   print("begin now", flush=True)
 
 # Use joblib to parallelize the grid search
 results = Parallel(n_jobs=-1, verbose=10)(
