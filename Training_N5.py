@@ -1305,7 +1305,7 @@ def evaluate_model(model, training_data):
 
 # Function to train and evaluate the model for a specific parameter combination
 def train_and_evaluate(params, training_data, eval_data):
-    print(params)
+    print(params, flush=True)
     logging.info(f"Current params: {params}")
     lr, beta, num_epochs, beta_decay = params
     

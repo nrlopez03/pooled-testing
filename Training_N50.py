@@ -1114,13 +1114,15 @@ G = 5
 d = 3
 num_types = 9
 input_size = num_types  # Two relevant attributes per agent
-num_tests = 2 ** (B -1)
+num_tests = (2 ** B) -1
 output_size = num_tests * G  # Boolean list size
 num_epochs = 1000
 num_samples = 100000
 lr = 0.01
 beta = 0.1
 beta_decay = 0.000
+
+trial = True
 
 logging.basicConfig(
     level=logging.INFO,
@@ -1152,14 +1154,14 @@ class GroupedAgentIDModel(nn.Module):
         self.num_tests = num_tests
         self.group_size = G
         self.N = N
-
+    
     def forward(self, x):
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        logits = self.fc3(x)
-        # Reshape to (batch_size, num_groups, group_size)
-        return logits.view(-1, self.num_tests, G)
+      x = F.relu(self.fc1(x))
+      x = F.relu(self.fc2(x))
+      logits = self.fc3(x)
+      logits = logits.view(-1, self.num_tests, G)  # Reshape to (batch_size, num_groups, group_size)
 
+      return logits
 
 # Function to sample actions (boolean values) based on the predicted probabilities
 def get_agent_ids(logits):
@@ -1183,13 +1185,65 @@ def create_RL_training_data(num_samples):
 
 # Training loop using REINFORCE with model saving
 # Preprocess the agents by extracting the relevant attributes
-# todo
-def preprocess_agents(agents):
-    processed_agents = [agent[1:] for agent in agents]  # Ignore the first attribute
-    return torch.tensor(processed_agents, dtype=torch.float32).flatten()  # Flatten for input
+def preprocess_agents(agents, classOrder):
+    # Extract the class tuples from agents
+    agent_classes = [tuple(agent[1:]) for agent in agents]
+    
+    # Count occurrences of each class in classOrder
+    counts = [agent_classes.count(class_type) for class_type in classOrder]
+
+    if trial:
+       print(counts, flush=True)
+    
+    # Convert the counts list to a PyTorch tensor
+    return torch.tensor(counts, dtype=torch.float32).flatten()
+
+def compute_reward(predicted_ids, agents):
+
+    # Ensure outputs are between 0 and N-1
+    predicted_ids = predicted_ids % N # Use modulo operation
+    predicted_ids = torch.floor(predicted_ids).long()  # Convert to integers
+    
+    id_list = predicted_ids.flatten()
+    id_list = id_list.tolist()
+
+    if trial: 
+      print(f"id_list: {id_list}", flush=True)
+    
+    def id_list_to_tree(id_list):
+    
+        # Extract the current node values
+        current_values = set(id_list[:G])
+        
+        if len(id_list) == G:
+            return (current_values, None, None)
+        
+        # Move the index forward by N for the next segment
+        cutoff = G + ((len(id_list) - G) // 2)
+        
+        leftList = id_list[G : cutoff]
+        rightList = id_list[cutoff:]
+        
+        # Recursively construct the left subtree
+        left_subtree = id_list_to_tree(leftList)
+        
+        # Recursively construct the right subtree
+        right_subtree = id_list_to_tree(rightList)
+        
+        return (current_values, left_subtree, right_subtree)
+    
+    tree = id_list_to_tree(id_list)
+    if trial:
+       print(f"tree: {tree}", flush=True)
+    utility, _ = analyzeTreeGibbs(tree, agents)
+    if trial:
+       print(f"utility: {utility}", flush=True)
+    return utility
 
 # Training loop using REINFORCE with model saving
 def train_RL_model(model, optimizer, training_data, num_epochs, lr, beta, beta_decay, save_interval=100, save_path='models/'):
+    if trial:
+       print("begin train", flush=True)
 
     # Function to save the model
     def save_RL_model(model, samples, epoch, save_path):
@@ -1216,7 +1270,7 @@ def train_RL_model(model, optimizer, training_data, num_epochs, lr, beta, beta_d
 
         for agents in training_data:
             # Preprocess agents
-            input_data = preprocess_agents(agents)
+            input_data = preprocess_agents(agents, classOrder)
             input_data = input_data.unsqueeze(0)  # Add batch dimension
 
             # Forward pass
@@ -1227,13 +1281,18 @@ def train_RL_model(model, optimizer, training_data, num_epochs, lr, beta, beta_d
 
             # Compute reward based on predicted IDs
             reward = compute_reward(predicted_ids, agents)
+            if trial:
+               print(f"reward: {reward}", flush=True)
 
             # Compute probabilities for entropy
-            probabilities = F.softmax(logits, dim=-1)
-            entropy = -torch.sum(probabilities * torch.log(probabilities + 1e-8))  # Avoid log(0)
+            probabilities = F.sigmoid(logits)
+            entropy = -torch.sum(probabilities * torch.log(probabilities))  # Avoid log(0)
 
+            log_probs = torch.log(logits)
             # Combine reward and entropy
-            loss = -(reward.mean() + current_beta * entropy)
+            loss = -(log_probs * reward) + -(current_beta * entropy)
+
+            loss = loss.mean()
 
             # Backpropagation
             optimizer.zero_grad()
@@ -1241,7 +1300,7 @@ def train_RL_model(model, optimizer, training_data, num_epochs, lr, beta, beta_d
             optimizer.step()
 
             epoch_loss += loss.item()
-            epoch_reward += reward.item()
+            epoch_reward += reward
 
         # Save model every `save_interval` epochs
         if (epoch + 1) % save_interval == 0:
@@ -1286,13 +1345,27 @@ eval_data = getAgentsFromTrainData(f'eval_data_N{N}_B{B}_G{G}.csv')
 print(f"Loaded from training_data_N{N}_B{B}_G{G}.csv and eval_data_N{N}_B{B}_G{G}.csv")
 logging.info(f"Loaded from training_data_N{N}_B{B}_G{G}.csv and eval_data_N{N}_B{B}_G{G}.csv")
 
+def returnOrder(training_data):
+
+  totalAgents = [agent[1:] for iteration in training_data for agent in iteration]
+
+  # Step 2: Convert to a set to remove duplicates
+  unique_classes = set(totalAgents)
+
+  # Step 3: Sort the set by the first and second items
+  sorted_list = sorted(unique_classes, key=lambda x: (x[0], x[1]))
+  return sorted_list
+
+classOrder = returnOrder(training_data)
+print(classOrder, flush=True)
+
 # Define the scoring function (e.g., average reward over training data)
 def evaluate_model(model, training_data):
     model.eval()  # Set model to evaluation mode
     total_reward = 0
     with torch.no_grad():
         for agents in training_data:
-            input_data = preprocess_agents(agents).unsqueeze(0)
+            input_data = preprocess_agents(agents, classOrder).unsqueeze(0)
             logits = model(input_data)
 
             predicted_ids = get_agent_ids(logits)
@@ -1301,11 +1374,12 @@ def evaluate_model(model, training_data):
             reward = compute_reward(predicted_ids, agents)
 
             total_reward += reward
+
     return total_reward / len(training_data)  # Return average reward
 
 # Function to train and evaluate the model for a specific parameter combination
 def train_and_evaluate(params, training_data, eval_data):
-    print(params)
+    print(params, flush=True)
     logging.info(f"Current params: {params}")
     lr, beta, num_epochs, beta_decay = params
     
