@@ -1108,8 +1108,8 @@ def analyzeTreeSample(tree, agents, confidence_level=0.95, bootstrap_samples=100
 
 # %%
 # Define the number of agents and the group test parameters
-N = 5  # Number of agents
-B = 3  # Number of tests (defines output boolean list size)
+N = 3  # Number of agents
+B = 2  # Number of tests (defines output boolean list size)
 G = N
 d = 3
 input_size = N * 2  # Two relevant attributes per agent
@@ -1217,7 +1217,7 @@ def train_RL_model(model, optimizer, training_data, num_epochs, lr, beta, beta_d
             # print(f"Boolean tree: {boolean_tree}")
 
             # Policy gradient loss (-log_prob * reward)
-            log_probs = torch.log(predicted_probabilities)
+            log_probs = torch.log(predicted_probabilities + 1e-8)
             # print(f"Log probs: {log_probs}")
 
             # Compute entropy
@@ -1236,7 +1236,21 @@ def train_RL_model(model, optimizer, training_data, num_epochs, lr, beta, beta_d
             # Backpropagation
             optimizer.zero_grad()
             loss.backward()
+
+            for name, param in model.named_parameters():
+              if param.grad is not None:  # Gradients might not exist for all params
+                  if torch.isnan(param.grad).any():
+                      print(f"NaN in gradient of {name} during training with agents: {agents}, reward: {reward}, loss: {loss}, log_probs: {log_probs}, current_beta: {current_beta}, entropy: {entropy}, probs: {predicted_probabilities}", flush=True)
+                  if torch.isinf(param.grad).any():
+                      print(f"Infinity in gradient of {name} during training with agents: {agents}, reward: {reward}, loss: {loss}, log_probs: {log_probs}, current_beta: {current_beta}, entropy: {entropy}, probs: {predicted_probabilities}", flush=True)
+
             optimizer.step()
+
+            for name, param in model.named_parameters():
+              if torch.isnan(param).any():
+                  print(f"NaN in parameter: {name} after optimizer step with agents: {agents}, reward: {reward}, loss: {loss}, log_probs: {log_probs}, current_beta: {current_beta}, entropy: {entropy}, probs: {predicted_probabilities}", flush=True)
+              if torch.isinf(param).any():
+                  print(f"Infinity in parameter: {name} after optimizer step with agents: {agents}, reward: {reward}, loss: {loss}, log_probs: {log_probs}, current_beta: {current_beta}, entropy: {entropy}, probs: {predicted_probabilities}", flush=True)
 
             epoch_loss += loss.item()
             epoch_reward += reward

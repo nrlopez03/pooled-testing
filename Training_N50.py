@@ -1261,7 +1261,7 @@ def train_RL_model(model, optimizer, training_data, num_epochs, lr, beta, beta_d
             break
 
     # Now continue training from start_epoch to num_epochs
-    for epoch in range(num_epochs):
+    for epoch in tqdm(range(start_epoch, num_epochs)):
         epoch_loss = 0
         epoch_reward = 0
 
