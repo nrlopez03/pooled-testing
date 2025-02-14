@@ -20,7 +20,7 @@ source /shared/home/nil527/.bashrc
 conda activate apmth91r
 
 # Run the Python script
-/shared/spack/opt/spack/linux-amzn2-skylake_avx512/gcc-14.1.0/miniconda3-24.3.0-zxx5jostrj4myhf7bi3oap3ylkmegd3a/envs/apmth91r/bin/python conicSample.py
+/shared/spack/opt/spack/linux-amzn2-skylake_avx512/gcc-14.1.0/miniconda3-24.3.0-zxx5jostrj4myhf7bi3oap3ylkmegd3a/envs/apmth91r/bin/python PPO_bucket.py
 
 # Optionally: Deactivate the Conda environment after running the script
 conda deactivate
