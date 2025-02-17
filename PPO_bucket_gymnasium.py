@@ -293,7 +293,7 @@ def train_model(episodes, save_interval=1000, model_path=model_path):
         model = PPO("MlpPolicy", env, verbose=1) # type: ignore
     
     for episode in range(start_episode, episodes, save_interval):
-        model.learn(total_timesteps=save_interval, reset_num_timesteps=False, log_interval=25)
+        model.learn(total_timesteps=save_interval, reset_num_timesteps=False, log_interval=25) # prev 10
         model.save(f"{model_path}_{episode + save_interval}")
         print(f"Saved model at episode {episode + save_interval}")
 
@@ -301,7 +301,7 @@ def train_model(episodes, save_interval=1000, model_path=model_path):
     print("Training complete. Final model saved.")
 
 # Example training run
-train_model(episodes=50000000, save_interval=250000) 
+train_model(episodes=50000000, save_interval=250000) # prev 20000000, 250000
 
 # Use trained PPO model on a given list of agents
 def use_trained_model(agent_list, model_path=model_path):

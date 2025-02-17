@@ -8,10 +8,11 @@ from mosek.fusion import *
 from itertools import combinations, product, chain
 
 N = 50
-B = 3
+B = 4
 G = 5
-model_path = f"PPOGymnasiumMore/PPO_model_N{N}_B{B}_G{G}"
-direct_path_B2 = 'PPOGymnasium/PPO_model_N50_B2_G5_50000000.zip'
+model_path = f"PPOGymnasium/PPO_model_N{N}_B{B}_G{G}"
+direct_path_B2 = 'PPOGymnasium/PPO_model_N50_B2_G5_20000000.zip'
+direct_path_B3 = 'PPOGymnasium/PPO_model_N50_B3_G5_20000000.zip'
 
 def bayesTheorem(agents, posGroups, negAgents):
 
@@ -276,7 +277,7 @@ class AgentSelectionEnvB2(gym.Env):
 model2 = PPO.load(direct_path_B2)
 env2 = AgentSelectionEnvB2()
 
-def use_prev_model(agent_list, currentB):
+def use_b2_model(agent_list, currentB):
 
     if currentB == 2:
        currentModel = model2
@@ -292,6 +293,57 @@ def use_prev_model(agent_list, currentB):
     return currentEnv.selected_agents
 
 class AgentSelectionEnvB3(AgentSelectionEnvB2):
+    def _compute_reward(self):
+        """Compute final reward: Bernoulli on health values, then multiply by sum of utilities."""
+
+        healthStatus = [np.random.binomial(1, agent[2]) for agent in self.agents]
+        tests = [self.selected_agents]
+        negative = all(healthStatus[agent] == 1 for agent in self.selected_agents)
+
+        for currentBudget in range(B-1, 0, -1):
+            if negative:
+                negDict = bayesTheorem(self.agents, posGroups={}, negAgents=self.selected_agents)
+                testOutcomeAgents = [(idNum, utility, health) for idNum, (utility, health) in negDict.items()]
+            else:    
+                posDict = bayesTheorem(self.agents, posGroups={frozenset(self.selected_agents)}, negAgents={})
+                testOutcomeAgents = [(idNum, utility, health) for idNum, (utility, health) in posDict.items()]
+
+            if currentBudget == 1:
+                nextAgents, _ = solveConicSingle(testOutcomeAgents, G)
+                tests.append({nextAgent[0] for nextAgent in nextAgents})
+            else:
+                nextAgents = use_b2_model(testOutcomeAgents, currentBudget)
+                tests.append(nextAgents)
+
+        consideredAgents = set()
+        totalUtility = 0
+        for currentAgents in tests:
+            negative = all(healthStatus[id] == 1 for id in currentAgents)
+            if negative:
+              totalUtility += sum(self.agents[currentAgent][1] for currentAgent in currentAgents if currentAgent not in consideredAgents)
+              consideredAgents = consideredAgents.union(currentAgents)
+
+        return totalUtility 
+
+model3 = PPO.load(direct_path_B3)
+env3 = AgentSelectionEnvB3()
+
+def use_b3_model(agent_list, currentB):
+
+    if currentB == 3:
+       currentModel = model3
+       currentEnv = env3
+    
+    obs, _ = currentEnv.reset(agent_list)
+    done = False
+    
+    while not done:
+        action, _ = currentModel.predict(obs)
+        obs, _, done, _, _ = currentEnv.step(int(action), skip_reward=True)
+    
+    return currentEnv.selected_agents
+
+class AgentSelectionEnvB4(AgentSelectionEnvB2):
     def _compute_reward(self):
         """Compute final reward: Bernoulli on health values, then multiply by sum of utilities."""
 
@@ -312,8 +364,11 @@ class AgentSelectionEnvB3(AgentSelectionEnvB2):
                 fullNext, _ = solveConicSingle(testOutcomeAgents, G)
                 nextAgents = {nextAgent[0] for nextAgent in fullNext}
                 tests.append(nextAgents)
-            else:
-                nextAgents = use_prev_model(testOutcomeAgents, currentBudget)
+            elif currentBudget == 2:
+                nextAgents = use_b2_model(testOutcomeAgents, currentBudget)
+                tests.append(nextAgents)
+            elif currentBudget == 3:
+                nextAgents = use_b3_model(testOutcomeAgents, currentBudget)
                 tests.append(nextAgents)
 
         consideredAgents = set()
@@ -327,7 +382,7 @@ class AgentSelectionEnvB3(AgentSelectionEnvB2):
         return totalUtility 
 
 def train_model(episodes, save_interval=1000, model_path=model_path):
-    env = AgentSelectionEnvB3()
+    env = AgentSelectionEnvB4()
     start_episode = 0
     
     # Find closest existing model
@@ -355,7 +410,7 @@ def train_model(episodes, save_interval=1000, model_path=model_path):
     print("Training complete. Final model saved.")
 
 # Example training run
-train_model(episodes=50000000, save_interval=250000) # prev 20000000, 250000
+train_model(episodes=20000000, save_interval=250000) 
 
 # Use trained PPO model on a given list of agents
 def use_trained_model(agent_list, model_path=model_path):
