@@ -269,7 +269,7 @@ class AgentSelectionEnv(gym.Env):
         return totalUtility
 
     def render(self):
-        selected_ids = [agent[0] for agent in self.selected_agents]
+        selected_ids = [agent for agent in self.selected_agents]
         print(f"Selected agent IDs: {selected_ids}, Final reward: {self._compute_reward()}")
 
 def train_model(episodes, save_interval=1000, model_path=model_path):
@@ -293,7 +293,7 @@ def train_model(episodes, save_interval=1000, model_path=model_path):
         model = PPO("MlpPolicy", env, verbose=1) # type: ignore
     
     for episode in range(start_episode, episodes, save_interval):
-        model.learn(total_timesteps=save_interval, reset_num_timesteps=False)
+        model.learn(total_timesteps=save_interval, reset_num_timesteps=False, log_interval=10)
         model.save(f"{model_path}_{episode + save_interval}")
         print(f"Saved model at episode {episode + save_interval}")
 
@@ -301,7 +301,7 @@ def train_model(episodes, save_interval=1000, model_path=model_path):
     print("Training complete. Final model saved.")
 
 # Example training run
-train_model(episodes=10000000, save_interval=250000) 
+train_model(episodes=20000000, save_interval=250000) 
 
 # Use trained PPO model on a given list of agents
 def use_trained_model(agent_list, model_path=model_path):
@@ -330,13 +330,13 @@ def use_trained_model(agent_list, model_path=model_path):
     print("Using trained model to select agents...")
     while not done:
         action, _ = model.predict(obs)
-        obs, reward, done, _ = env.step(action)
+        obs, reward, done, _ = env.step(int(action))
         env.render()
     
-    print(f"Final selected agent IDs: {[agent[0] for agent in env.selected_agents]}")
+    print(f"Final selected agent IDs: {[agent for agent in env.selected_agents]}")
     print(f"Final reward: {reward}")
 
 # # Example usage with a specific set of agents:
 # custom_agents = [(i, np.random.choice([0, 1, 2, 3]), np.random.uniform(0, 1)) for i in range(50)]
+# print(custom_agents)
 # use_trained_model(custom_agents)
-
