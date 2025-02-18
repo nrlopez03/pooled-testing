@@ -11,7 +11,7 @@ N = 50
 B = 3
 G = 5
 model_path = f"PPOGymnasiumMore/PPO_model_N{N}_B{B}_G{G}"
-direct_path_B2 = 'PPOGymnasium/PPO_model_N50_B2_G5_50000000.zip'
+direct_path_B2 = 'PPOGymnasiumMore/PPO_model_N50_B2_G5_50000000.zip'
 
 def bayesTheorem(agents, posGroups, negAgents):
 
