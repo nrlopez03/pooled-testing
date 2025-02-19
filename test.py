@@ -8,14 +8,14 @@ import math
 from mosek.fusion import *
 from itertools import combinations, product, chain
 
-utility_bins = 4
-utility_bin_edges = np.array([0, 2, 3])
-for utility in range(4):
-    print(np.digitize(utility, utility_bin_edges) - 1)
 
-x = set()
-x.add(1)
-y = set(x)
-y.add(2)
-y.remove(1)
-print(x, y)
+health_bins = 4
+health_bin_edges = np.linspace(0, 1, health_bins + 1)
+utility_bin_edges = np.array([0, 2, 3])
+
+for health in [0, 0.1, 0.3, 0.6, 0.9, 1]:
+    for utility in [0, 1, 2, 3]:
+        utility_bin = int(np.digitize(utility, utility_bin_edges) - 1)
+        health_bin = int(np.digitize(health, health_bin_edges) - 1)
+        category = min(utility_bin * health_bins + health_bin, 
+        print(f"health: {health}, utility: {utility}, category: {category}")
