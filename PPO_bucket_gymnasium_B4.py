@@ -11,9 +11,14 @@ import random
 N = 50
 B = 4
 G = 5
-model_path = f"PPOImproved/PPO_model_N{N}_B{B}_G{G}"
-direct_path_B2 = 'PPOImproved/PPO_model_N50_B2_G5_50000000.zip'
-direct_path_B3 = 'PPOImproved/PPO_model_N50_B3_G5_20000000.zip'
+health_buckets = 5
+more = False
+eps = 50000 if more else 20000000 # prev 50000000
+saveinterval = 250000 
+loginterval = 25 if more else 10 # prev 25
+model_path = f"PPO_{health_buckets}Bucket_G{G}_More/PPO_model_N{N}_B{B}_G{G}" if more else f"PPO_{health_buckets}Bucket_G{G}/PPO_model_N{N}_B{B}_G{G}"
+direct_path_B2 = f"PPO_{health_buckets}Bucket_G{G}_More/PPO_model_N{N}_B2_G{G}_{eps}.zip" if more else f"PPO_{health_buckets}Bucket_G{G}/PPO_model_N{N}_B2_G{G}_{eps}.zip"
+direct_path_B3 = f"PPO_{health_buckets}Bucket_G{G}_More/PPO_model_N{N}_B3_G{G}_{eps}.zip" if more else f"PPO_{health_buckets}Bucket_G{G}/PPO_model_N{N}_B3_G{G}_{eps}.zip"
 
 def bayesTheorem(agents, posGroups, negAgents):
 
@@ -152,7 +157,7 @@ def solveConicSingle(agents, G, verbose=False):
         return strategy, utility
 
 class AgentSelectionEnvB2(gym.Env):
-    def __init__(self, health_bins=4, utility_bins=3, max_selection=G, num_agents=N):
+    def __init__(self, health_bins=health_buckets, utility_bins=3, max_selection=G, num_agents=N):
         super(AgentSelectionEnvB2, self).__init__()
 
         self.health_bins = health_bins
@@ -434,7 +439,7 @@ def train_model(episodes, save_interval=1000, model_path=model_path, log_interva
     print("Training complete. Final model saved.")
 
 # Example training run
-train_model(episodes=20000000, save_interval=250000, log_interval=10) # prev 50000000, 250000, 25
+train_model(episodes=eps, save_interval=saveinterval, log_interval=loginterval) # prev 50000000, 250000, 25
 
 # Use trained PPO model on a given list of agents
 def use_trained_model(agent_list, model_path=model_path):

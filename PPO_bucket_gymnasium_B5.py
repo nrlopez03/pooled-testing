@@ -4,12 +4,12 @@ import os
 from gymnasium import spaces
 from stable_baselines3 import PPO
 import math
-from mosek.fusion import *
+from mosek.fusion import * # type: ignore
 from itertools import combinations, product, chain
 import random 
 
 N = 50
-B = 3
+B = 5
 G = 5
 health_buckets = 5
 more = False
@@ -18,6 +18,8 @@ saveinterval = 250000
 loginterval = 25 if more else 10 # prev 25
 model_path = f"PPO_{health_buckets}Bucket_G{G}_More/PPO_model_N{N}_B{B}_G{G}" if more else f"PPO_{health_buckets}Bucket_G{G}/PPO_model_N{N}_B{B}_G{G}"
 direct_path_B2 = f"PPO_{health_buckets}Bucket_G{G}_More/PPO_model_N{N}_B2_G{G}_{eps}.zip" if more else f"PPO_{health_buckets}Bucket_G{G}/PPO_model_N{N}_B2_G{G}_{eps}.zip"
+direct_path_B3 = f"PPO_{health_buckets}Bucket_G{G}_More/PPO_model_N{N}_B3_G{G}_{eps}.zip" if more else f"PPO_{health_buckets}Bucket_G{G}/PPO_model_N{N}_B3_G{G}_{eps}.zip"
+direct_path_B4 = f"PPO_{health_buckets}Bucket_G{G}_More/PPO_model_N{N}_B4_G{G}_{eps}.zip" if more else f"PPO_{health_buckets}Bucket_G{G}/PPO_model_N{N}_B4_G{G}_{eps}.zip"
 
 def bayesTheorem(agents, posGroups, negAgents):
 
@@ -100,8 +102,6 @@ def bayesTheorem(agents, posGroups, negAgents):
 
         probPos[tuple(posNotIn)] = getProb(posNotIn)
 
-      if probPos[tuple(posGroups)] == 0:
-        print(f"posGroups: {posGroups}, posNotIn: {posNotIn}, probPos: {probPos}, negAgents: {negAgents}, agents: {agents}")
       pAgentPos = probPos[tuple(posNotIn)] * (1 - agent[2]) / probPos[tuple(posGroups)]
       health = 1 - pAgentPos
 
@@ -202,6 +202,7 @@ class AgentSelectionEnvB2(gym.Env):
                 utility_bin = int(np.digitize(utility, self.utility_bin_edges) - 1)
                 health_bin = int(np.digitize(health, self.health_bin_edges) - 1)
                 category = utility_bin * self.health_bins + health_bin
+                
                 self.category_agents[category].append((agent_id, utility, health))
                 self.agents.append((agent_id, utility, health))
         else:
@@ -280,7 +281,6 @@ class AgentSelectionEnvB2(gym.Env):
                 nextAgents = {nextAgent[0] for nextAgent in fullNext}
                 tests.append(nextAgents)
 
-
         consideredAgents = set()
         totalUtility = 0
         for currentAgents in tests:
@@ -349,8 +349,172 @@ class AgentSelectionEnvB3(AgentSelectionEnvB2):
 
         return totalUtility 
 
+model3 = PPO.load(direct_path_B3)
+env3 = AgentSelectionEnvB3()
+
+def use_b3_model(agent_list, posGroups, negAgents, currentB):
+
+    if currentB == 3:
+       currentModel = model3
+       currentEnv = env3
+    
+    obs, _ = currentEnv.reset(agent_list, posGroups=posGroups, negAgents= negAgents)
+    done = False
+    
+    while not done:
+        action, _ = currentModel.predict(obs)
+        obs, _, done, _, _ = currentEnv.step(int(action), skip_reward=True)
+    
+    return currentEnv.selected_agents
+
+class AgentSelectionEnvB4(AgentSelectionEnvB2):
+    def _compute_reward(self):
+        """Compute final reward: Bernoulli on health values, then multiply by sum of utilities."""
+
+        healthStatus = [np.random.binomial(1, agent[2]) for agent in self.agents]
+        nextAgents = self.selected_agents
+        tests = [nextAgents]
+
+        for currentBudget in range(B-1, 0, -1):
+            negative = all(healthStatus[agent] == 1 for agent in nextAgents)
+            if negative:
+                self.negAgents.update(nextAgents)
+                newPosGroups = set()
+                for posGroup in self.posGroups:
+                    newPosGroups.add(posGroup.difference(nextAgents))
+                self.posGroups = newPosGroups
+                negDict = bayesTheorem(self.agents, posGroups=frozenset(self.posGroups), negAgents=nextAgents)
+                testOutcomeAgents = [(idNum, utility, health) for idNum, (utility, health) in negDict.items()]
+            else:    
+                self.posGroups.add(frozenset(nextAgents.difference(self.negAgents)))
+                posDict = bayesTheorem(self.agents, posGroups=frozenset(self.posGroups), negAgents=self.negAgents)
+                testOutcomeAgents = [(idNum, utility, health) for idNum, (utility, health) in posDict.items()]
+
+            if currentBudget == 1:
+                fullNext, _ = solveConicSingle(testOutcomeAgents, G)
+                nextAgents = {nextAgent[0] for nextAgent in fullNext}
+                tests.append(nextAgents)
+            elif currentBudget == 2:
+                nextAgents = use_b2_model(testOutcomeAgents, self.posGroups, self.negAgents, currentBudget)
+                tests.append(nextAgents)
+            elif currentBudget == 3:
+                nextAgents = use_b3_model(testOutcomeAgents, self.posGroups, self.negAgents, currentBudget)
+                tests.append(nextAgents)
+
+        consideredAgents = set()
+        totalUtility = 0
+        for currentAgents in tests:
+            negative = all(healthStatus[id] == 1 for id in currentAgents)
+            if negative:
+              totalUtility += sum(self.agents[currentAgent][1] for currentAgent in currentAgents if currentAgent not in consideredAgents)
+              consideredAgents = consideredAgents.union(currentAgents)
+
+        return totalUtility 
+
+model4 = PPO.load(direct_path_B4)
+env4 = AgentSelectionEnvB4()
+
+def use_b4_model(agent_list, posGroups, negAgents, currentB):
+
+    if currentB == 4:
+       currentModel = model4
+       currentEnv = env4
+    
+    obs, _ = currentEnv.reset(agent_list, posGroups=posGroups, negAgents= negAgents)
+    done = False
+    
+    while not done:
+        action, _ = currentModel.predict(obs)
+        obs, _, done, _, _ = currentEnv.step(int(action), skip_reward=True)
+    
+    return currentEnv.selected_agents
+
+class AgentSelectionEnvB5(AgentSelectionEnvB2):
+    def reset(self, agent_list=None, posGroups=None, negAgents=None, seed=None):
+        """Initialize a new episode with a given set of 50 agents or generate a new set."""
+        self.agents = []
+        self.posGroups = posGroups if posGroups is not None else set()
+        self.negAgents = negAgents if negAgents is not None else set()
+        self.category_agents = {i: [] for i in range(self.num_categories)}
+        
+        if agent_list is None:
+
+            for agent_id in range(self.num_agents):
+                utility = np.random.choice([1, 2, 3])
+                health = np.random.uniform(0, 1)
+                
+                # Assign category based on health and utility bins
+                utility_bin = int(np.digitize(utility, self.utility_bin_edges) - 1)
+                health_bin = int(np.digitize(health, self.health_bin_edges) - 1)
+                category = utility_bin * self.health_bins + health_bin
+                
+                self.category_agents[category].append((agent_id, utility, health))
+                self.agents.append((agent_id, utility, health))
+        else:
+            for agent in agent_list:
+                agent_id, utility, health = agent
+                utility_bin = np.digitize(utility, self.utility_bin_edges) - 1
+                health_bin = np.digitize(health, self.health_bin_edges) - 1
+                category = utility_bin * self.health_bins + health_bin
+                self.category_agents[category].append((agent_id, utility, health))
+                self.agents.append((agent_id, utility, health))
+            for category in self.category_agents:
+                random.shuffle(self.category_agents[category])
+            self.agents.sort(key=lambda x: x[0])
+        
+        self.selected_agents = set()
+        self.category_counts = {i: len(self.category_agents[i]) for i in range(self.num_categories)}
+        self.selection_attempts = 0  # Track total selections attempted
+        return self._get_state(), {}
+
+    def _compute_reward(self):
+        """Compute final reward: Bernoulli on health values, then multiply by sum of utilities."""
+
+        healthStatus = [np.random.binomial(1, agent[2]) for agent in self.agents]
+        nextAgents = self.selected_agents
+        tests = [nextAgents]
+
+        for currentBudget in range(B-1, 0, -1):
+            negative = all(healthStatus[agent] == 1 for agent in nextAgents)
+            if negative:
+                self.negAgents.update(nextAgents)
+                newPosGroups = set()
+                for posGroup in self.posGroups:
+                    newPosGroups.add(posGroup.difference(nextAgents))
+                self.posGroups = newPosGroups
+                negDict = bayesTheorem(self.agents, posGroups=frozenset(self.posGroups), negAgents=nextAgents)
+                testOutcomeAgents = [(idNum, utility, health) for idNum, (utility, health) in negDict.items()]
+            else:    
+                self.posGroups.add(frozenset(nextAgents.difference(self.negAgents)))
+                posDict = bayesTheorem(self.agents, posGroups=frozenset(self.posGroups), negAgents=self.negAgents)
+                testOutcomeAgents = [(idNum, utility, health) for idNum, (utility, health) in posDict.items()]
+
+            if currentBudget == 1:
+                fullNext, _ = solveConicSingle(testOutcomeAgents, G)
+                nextAgents = {nextAgent[0] for nextAgent in fullNext}
+                tests.append(nextAgents)
+            elif currentBudget == 2:
+                nextAgents = use_b2_model(testOutcomeAgents, self.posGroups, self.negAgents, currentBudget)
+                tests.append(nextAgents)
+            elif currentBudget == 3:
+                nextAgents = use_b3_model(testOutcomeAgents, self.posGroups, self.negAgents, currentBudget)
+                tests.append(nextAgents)
+            elif currentBudget == 4:
+                nextAgents = use_b4_model(testOutcomeAgents, self.posGroups, self.negAgents, currentBudget)
+                tests.append(nextAgents)
+
+        consideredAgents = set()
+        totalUtility = 0
+        for currentAgents in tests:
+            negative = all(healthStatus[id] == 1 for id in currentAgents)
+            if negative:
+              totalUtility += sum(self.agents[currentAgent][1] for currentAgent in currentAgents if currentAgent not in consideredAgents)
+              consideredAgents = consideredAgents.union(currentAgents)
+
+        return totalUtility 
+
 def train_model(episodes, save_interval=1000, model_path=model_path, log_interval=10):
-    env = AgentSelectionEnvB3()
+    env = AgentSelectionEnvB5()
     start_episode = 0
     
     # Find closest existing model
@@ -378,7 +542,6 @@ def train_model(episodes, save_interval=1000, model_path=model_path, log_interva
     print("Training complete. Final model saved.")
 
 # Example training run
-# train_model(episodes=50000000, save_interval=250000, log_interval=25) 
 train_model(episodes=eps, save_interval=saveinterval, log_interval=loginterval) # prev 50000000, 250000, 25
 
 # Use trained PPO model on a given list of agents
@@ -408,7 +571,7 @@ def use_trained_model(agent_list, model_path=model_path):
     print("Using trained model to select agents...")
     while not done:
         action, _ = model.predict(obs)
-        obs, reward, done, _, _  = env.step(int(action))
+        obs, reward, done, _, _ = env.step(int(action))
         env.render()
     
     print(f"Final selected agent IDs: {[agent for agent in env.selected_agents]}")
