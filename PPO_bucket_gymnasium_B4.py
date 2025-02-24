@@ -10,10 +10,10 @@ import random
 
 N = 50
 B = 4
-G = 5
+G = 3
 health_buckets = 5
 more = False
-eps = 50000 if more else 20000000 # prev 50000000
+eps = 50000000 if more else 20000000 # prev 50000000
 saveinterval = 250000 
 loginterval = 25 if more else 10 # prev 25
 model_path = f"PPO_{health_buckets}Bucket_G{G}_More/PPO_model_N{N}_B{B}_G{G}" if more else f"PPO_{health_buckets}Bucket_G{G}/PPO_model_N{N}_B{B}_G{G}"
