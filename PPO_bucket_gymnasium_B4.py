@@ -11,8 +11,8 @@ import random
 N = 50
 B = 4
 G = 3
-health_buckets = 5
-more = False
+health_buckets = 4
+more = True
 eps = 50000000 if more else 20000000 # prev 50000000
 saveinterval = 250000 
 loginterval = 25 if more else 10 # prev 25

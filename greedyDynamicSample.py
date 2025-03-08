@@ -742,7 +742,7 @@ def analyzeTreeGibbs(tree, agents, posGroups = frozenset(), negAgents = frozense
   return utility, (lowUtility, highUtility)
 
 # %%
-def analyzeTreeSample(tree, agents, confidence_level=0.95, bootstrap_samples=1000, cumulative_prob = 0.95, max_samples = 100000, unWeight=False):
+def analyzeTreeSample(tree, agents, confidence_level=0.95, bootstrap_samples=1000, cumulative_prob = 0.95, max_samples = 100000, unWeight=False, healthStatus = None):
 
     agentDict = dict()
 
@@ -770,7 +770,7 @@ def analyzeTreeSample(tree, agents, confidence_level=0.95, bootstrap_samples=100
 
             id, _, health = agent
             # Determine if the agent is healthy based on their health probability
-            is_healthy = random.random() < health
+            is_healthy = healthStatus[id] if healthStatus else random.random() < health
 
             # If the agent is unhealthy, add to the negative_agents list
             if is_healthy:
@@ -958,7 +958,9 @@ def solveConicGibbsGreedyDynamic(agents, G = G, B = B, posGroups = frozenset(), 
   else:
     return strategy, utility
 
-file_path = "sample_N50_d2_B5_G5_Utils1.csv"
+G = 5
+B = 5
+file_path = f"sample_N50_d2_B{B}_G{G}_Utils3.csv"
 df = pd.read_csv(file_path)
 
 function = solveConicGibbsGreedyDynamic
@@ -978,9 +980,9 @@ import numpy as np
 # Define the column name to check for missing values
 output_column = function.__name__
 
-def process_row(i, agent_data):
-    tree, _ = function(agent_data, G=5, B=5)
-    return i, analyzeTreeSample(generate_binary_tree(tree), agent_data, max_samples=1, unWeight=True)[3]
+def process_row(i, agent_data, healthStatus):
+    tree, _ = function(agent_data, G=G, B=B) # type: ignore
+    return i, analyzeTreeSample(generate_binary_tree(tree), agent_data, max_samples=1, unWeight=True, healthStatus=healthStatus)[3] # type: ignore
 
 batch_size = 10
 n_jobs = -1  # Use all CPU cores
@@ -991,10 +993,10 @@ rows_to_process = df[df[output_column].isna()].index.tolist()
 for batch_start in tqdm(range(0, len(rows_to_process), batch_size), desc="Processing batches", unit="batch"):
     batch_indices = rows_to_process[batch_start: batch_start + batch_size]
     
-    row_data = [(i, ast.literal_eval(df.at[i, 'agents'])) for i in batch_indices]
+    row_data = [(i, ast.literal_eval(df.at[i, 'agents']), ast.literal_eval(df.at[i, 'healthStatus'])) for i in batch_indices]
 
     results = Parallel(n_jobs=n_jobs, backend="multiprocessing", verbose=10)(
-        delayed(process_row)(i, data) for i, data in row_data
+        delayed(process_row)(i, data, healthStatus) for i, data, healthStatus in row_data
     )
     
     # Update DataFrame

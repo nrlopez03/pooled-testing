@@ -4,14 +4,14 @@ import os
 from gymnasium import spaces
 from stable_baselines3 import PPO
 import math
-from mosek.fusion import *
+from mosek.fusion import * # type: ignore
 from itertools import combinations, product, chain
 import random 
 
 N = 50
 B = 3
 G = 3
-health_buckets = 5
+health_buckets = 4
 more = True
 eps = 50000000 if more else 20000000 # prev 50000000
 saveinterval = 250000 
