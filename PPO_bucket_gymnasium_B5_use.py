@@ -13,8 +13,8 @@ import ast
 N = 50
 B = 5
 G = 3
-health_buckets = 5
-more = True
+health_buckets = 4
+more = False
 eps = 50000000 if more else 20000000
 direct_path_B2 = f"PPO_{health_buckets}Bucket_G{G}_More/PPO_model_N{N}_B2_G{G}_{eps}.zip" if more else f"PPO_{health_buckets}Bucket_G{G}/PPO_model_N{N}_B2_G{G}_{eps}.zip"
 direct_path_B3 = f"PPO_{health_buckets}Bucket_G{G}_More/PPO_model_N{N}_B3_G{G}_{eps}.zip" if more else f"PPO_{health_buckets}Bucket_G{G}/PPO_model_N{N}_B3_G{G}_{eps}.zip"

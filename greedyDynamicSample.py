@@ -958,50 +958,53 @@ def solveConicGibbsGreedyDynamic(agents, G = G, B = B, posGroups = frozenset(), 
   else:
     return strategy, utility
 
-G = 5
-B = 5
-file_path = f"sample_N50_d2_B{B}_G{G}_Utils3.csv"
-df = pd.read_csv(file_path)
+Gvals = [3,5]
+Bvals = [2,3,4]
 
-function = solveConicGibbsGreedyDynamic
+for G in Gvals:
+  for B in Bvals:
+    file_path = f"sample_N50_d2_B{B}_G{G}_Utils3.csv"
+    df = pd.read_csv(file_path)
 
-tqdm.pandas()
+    function = solveConicGibbsGreedyDynamic
 
-# Add an empty column if not present for storing results
-if function.__name__ not in df.columns:
-    df[function.__name__] = None
+    tqdm.pandas()
 
-from joblib import Parallel, delayed
-from tqdm import tqdm
-import ast
-import pandas as pd
-import numpy as np
+    # Add an empty column if not present for storing results
+    if function.__name__ not in df.columns:
+        df[function.__name__] = None
 
-# Define the column name to check for missing values
-output_column = function.__name__
+    from joblib import Parallel, delayed
+    from tqdm import tqdm
+    import ast
+    import pandas as pd
+    import numpy as np
 
-def process_row(i, agent_data, healthStatus):
-    tree, _ = function(agent_data, G=G, B=B) # type: ignore
-    return i, analyzeTreeSample(generate_binary_tree(tree), agent_data, max_samples=1, unWeight=True, healthStatus=healthStatus)[3] # type: ignore
+    # Define the column name to check for missing values
+    output_column = function.__name__
 
-batch_size = 10
-n_jobs = -1  # Use all CPU cores
+    def process_row(i, agent_data, healthStatus):
+        tree, _ = function(agent_data, G=G, B=B) # type: ignore
+        return i, analyzeTreeSample(generate_binary_tree(tree), agent_data, max_samples=1, unWeight=True, healthStatus=healthStatus)[3] # type: ignore
 
-# Identify rows that need processing
-rows_to_process = df[df[output_column].isna()].index.tolist()
+    batch_size = 10
+    n_jobs = -1  # Use all CPU cores
 
-for batch_start in tqdm(range(0, len(rows_to_process), batch_size), desc="Processing batches", unit="batch"):
-    batch_indices = rows_to_process[batch_start: batch_start + batch_size]
-    
-    row_data = [(i, ast.literal_eval(df.at[i, 'agents']), ast.literal_eval(df.at[i, 'healthStatus'])) for i in batch_indices]
+    # Identify rows that need processing
+    rows_to_process = df[df[output_column].isna()].index.tolist()
 
-    results = Parallel(n_jobs=n_jobs, backend="multiprocessing", verbose=10)(
-        delayed(process_row)(i, data, healthStatus) for i, data, healthStatus in row_data
-    )
-    
-    # Update DataFrame
-    for i, value in results:
-        df.at[i, output_column] = value
+    for batch_start in tqdm(range(0, len(rows_to_process), batch_size), desc="Processing batches", unit="batch"):
+        batch_indices = rows_to_process[batch_start: batch_start + batch_size]
+        
+        row_data = [(i, ast.literal_eval(df.at[i, 'agents']), ast.literal_eval(df.at[i, 'healthStatus'])) for i in batch_indices]
 
-    df.to_csv(file_path, index=False)
-    print(f"Saved at row {batch_start + batch_size}", flush=True)
+        results = Parallel(n_jobs=n_jobs, backend="multiprocessing", verbose=10)(
+            delayed(process_row)(i, data, healthStatus) for i, data, healthStatus in row_data
+        )
+        
+        # Update DataFrame
+        for i, value in results:
+            df.at[i, output_column] = value
+
+        df.to_csv(file_path, index=False)
+        print(f"Saved at row {batch_start + batch_size}", flush=True)
