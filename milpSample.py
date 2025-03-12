@@ -1202,7 +1202,7 @@ def eval_nonoverlap_sample(strategy, agents, healthStatus):
     
     return round(total_sum)
 
-Gvals = [3,5]
+Gvals = [3]
 Bvals = [2,3,4]
 
 for G in Gvals:
@@ -1210,7 +1210,7 @@ for G in Gvals:
     file_path = f"sample_N50_d2_B{B}_G{G}_Utils3.csv"
     df = pd.read_csv(file_path)
 
-    function = solveConicGibbsGreedyDynamic
+    function = solveMILP
 
     tqdm.pandas()
 
