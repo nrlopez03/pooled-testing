@@ -625,7 +625,8 @@ def analyzeTree(tree, agents, posGroups = frozenset(), negAgents = frozenset()):
   remaining = [person for person in agents if person not in firstTest]
 
   # utility, P(Healthy) of first test
-  firstIDs = frozenset(firstTest)
+  firstIDs = frozenset(agent[0] if isinstance(agent, tuple) else agent for agent in firstTest)
+
   if posGroups:
     for posGroup in posGroups:
       if posGroup.issubset(firstIDs):
@@ -633,11 +634,12 @@ def analyzeTree(tree, agents, posGroups = frozenset(), negAgents = frozenset()):
   else:
     posGroups = frozenset()
 
-  agentDict = bayesTheorem(agents, posGroups, negAgents)
+  # for person in firstTest:
+  #   firstUtility += agentDict[person][0]
+  #   firstHealthy *= agentDict[person][1]
+  # utility += firstUtility * firstHealthy
 
-  for person in firstTest:
-    firstUtility += agentDict[person][0]
-    firstHealthy *= agentDict[person][1]
+  firstUtility, firstHealthy = bayesTheoremGroup(agents, firstIDs, posGroups, negAgents) #type: ignore
   utility += firstUtility * firstHealthy
 
   # positive scenario
@@ -958,12 +960,12 @@ def solveConicGibbsGreedyDynamic(agents, G = G, B = B, posGroups = frozenset(), 
   else:
     return strategy, utility
 
-Gvals = [3,5]
-Bvals = [2,3,4]
+Gvals = [5]
+Bvals = [5]
 
 for G in Gvals:
   for B in Bvals:
-    file_path = f"sample_N50_d2_B{B}_G{G}_Utils3.csv"
+    file_path = f"data_N50_d2_B{B}_G{G}_Utils3.csv"
     df = pd.read_csv(file_path)
 
     function = solveConicGibbsGreedyDynamic
@@ -985,7 +987,8 @@ for G in Gvals:
 
     def process_row(i, agent_data, healthStatus):
         tree, _ = function(agent_data, G=G, B=B) # type: ignore
-        return i, analyzeTreeSample(generate_binary_tree(tree), agent_data, max_samples=1, unWeight=True, healthStatus=healthStatus)[3] # type: ignore
+        return i, analyzeTree(tree, agent_data) # type: ignore
+        # return i, analyzeTreeSample(generate_binary_tree(tree), agent_data, max_samples=1, unWeight=True, healthStatus=healthStatus)[3] # type: ignore
 
     batch_size = 10
     n_jobs = -1  # Use all CPU cores
