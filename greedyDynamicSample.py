@@ -341,119 +341,252 @@ def solveConicSingle(agents, G=G, verbose=False):
 
         return strategy, utility
 
-def GibbsMCMCWindow(agents, posGroups, negAgents, max_iterations=1000, tolerance=0.05, min_burn_in=50, window_size=100, confidence_level=0.95, n_bootstrap=1000):
+def GibbsMCMCWindowCount(
+    agents,
+    posGroups,          # list of (set_of_agent_ids, exact_count)
+    negAgents,          # set of forced-healthy agents
+    max_iterations=1000,
+    tolerance=0.05,
+    min_burn_in=50,
+    window_size=100,
+    confidence_level=0.95,
+    n_bootstrap=1000,
+    random_seed=None
+):
+    """
+    Single-block enumerative sampler for EXACT constraints, with 
+    a rolling-window check for convergence similar to your original Gibbs approach.
+    
+    1) Identify all unknown agents (those in any posGroup).
+    2) Enumerate all valid global assignments of those unknown agents that satisfy EXACT constraints,
+       weighting each by product-of-priors.
+    3) On each iteration, sample one assignment from that enumerated distribution. 
+       Store it in a rolling window for each agent.
+       After min_burn_in, check if the fraction of healthy (0) in the last window_size is stable.
+       If stable for all agents, conclude burn-in.
+    4) Then do additional samples for final probabilities + confidence intervals.
 
-    # Initialize agents with binary states (0: healthy, 1: infected), ensuring negAgents are always healthy
-    def initialize_agents_binary(agents, negAgents):
-        return {agent[0]: 0 if agent[0] in negAgents else np.random.choice([0, 1], p=[agent[2], 1-agent[2]]) for agent in agents}
+    Returns: 
+       agentDict[agent_id] = (utility, p_healthy, (ci_lower, ci_upper))
+    """
+    import numpy as np
+    from itertools import product
+    from scipy.stats import bernoulli
 
-    # Gibbs-like sampling: Update one agent's state given the rest of the current states
-    def update_agent_state(agent, agent_to_groups, health_states, agent_prob, negAgents):
-        """Update the state of the agent (0: healthy, 1: infected) based on the group constraints."""
-        if agent in negAgents:
-            return 0  # If the agent is in negAgents, they must always be healthy
+    if random_seed is not None:
+        np.random.seed(random_seed)
 
-        relevant_groups = agent_to_groups[agent]
-        must_be_infected = False
-        for group in relevant_groups:
-            if all(health_states[other] == 0 for other in group if other != agent):
-                must_be_infected = True
-                break  # Once the agent must be infected, no need to check other groups
+    # ------------------------------------------------------------
+    # 1) Identify unknown agents and build quick lookups
+    # ------------------------------------------------------------
+    all_unknown_ids = set()
+    for (grp, cval) in posGroups:
+        all_unknown_ids.update(grp)
+    all_unknown_ids = sorted(all_unknown_ids)
 
-        if must_be_infected:
-            return 1  # The agent must be infected to satisfy the group constraint
+    # agent_map for quick access
+    agent_map = {a[0]: a for a in agents}  # agent_id -> (id, utility, prior_infected)
+
+    # We'll store current "best guess" states for forced-healthy or non-unknown agents,
+    # but for unknowns, we sample new assignments each iteration.
+    health_states = {}
+    for (a_id, util, p_infected) in agents:
+        if a_id in negAgents:
+            health_states[a_id] = 0
         else:
-            return bernoulli.rvs(1 - agent_prob)
-        
-    unknownAgentIDs = {agent_id for posGroup in posGroups for agent_id in posGroup}
+            # Just do a random initial state from prior (though it's not crucial, 
+            # because each iteration we sample a full assignment for unknown agents).
+            health_states[a_id] = bernoulli.rvs(p_infected)
 
-    unknownAgents = [agent for agent in agents if agent[0] in unknownAgentIDs]
+    # ------------------------------------------------------------
+    # 2) Enumerate all valid assignments for the unknown agents
+    #    that satisfy EXACT constraints.
+    #    Each assignment is a dict: agent_id -> 0/1
+    # ------------------------------------------------------------
+    def is_valid(assignment_dict):
+        """Check if assignment_dict satisfies forced healthy + EXACT constraints."""
+        for (grp, exact_count) in posGroups:
+            # forced-healthy must remain 0
+            for forced_id in negAgents:
+                if forced_id in grp and assignment_dict[forced_id] == 1:
+                    return False
+            # Check exact_count
+            infected_in_group = sum(assignment_dict[a] for a in grp)
+            if infected_in_group != exact_count:
+                return False
+        return True
 
-    # Initialize binary health states
-    health_states = initialize_agents_binary(unknownAgents, negAgents)
+    def assignment_weight(assignment_dict):
+        """Product of priors for each agent's assigned state."""
+        w = 1.0
+        for a_id, state in assignment_dict.items():
+            if a_id in negAgents and state == 1:
+                return 0.0  # forced-healthy conflict
+            # agent's prior_infected
+            _, _, p_inf = agent_map[a_id]
+            if state == 1:
+                w *= p_inf
+            else:
+                w *= (1 - p_inf)
+        return w
 
-    # Precompute agent-to-groups mapping
-    agent_to_groups = {agent[0]: [group for group in posGroups if agent[0] in group] for agent in unknownAgents}
-
-    # Store history of probabilities to monitor convergence
-    health_history = {agent[0]: [] for agent in unknownAgents}
-
-    # Store counts of healthy samples for each agent
-    healthy_counts = {agent[0]: 0 for agent in unknownAgents}
-
-    # Run MCMC iterations
-    for iteration in range(max_iterations):
-        for agent in unknownAgents:
-            # Update the state of each agent given the current states, except for agents in negAgents
-            health_states[agent[0]] = update_agent_state(agent[0], agent_to_groups, health_states, agent[2], negAgents)
-
-        # Record the number of times each agent is healthy after burn-in
-        for agent in unknownAgents:
-            health_history[agent[0]].append(health_states[agent[0]])
-            if len(health_history[agent[0]]) > window_size:
-                health_history[agent[0]].pop(0)
-
-        # Check for convergence by comparing moving averages
-        if iteration > min_burn_in:
-            converged = True
-            for agent in unknownAgents:
-                if len(health_history[agent[0]]) >= window_size:
-                    avg_health = np.mean(health_history[agent[0]])
-                    prev_avg_health = np.mean(health_history[agent[0]][-window_size//2:])
-                    if abs(avg_health - prev_avg_health) > tolerance:
-                        converged = False
-                        break
-            if converged:
-                burn_in = iteration
+    # Build a baseline dict for all agents, using the current health_states
+    # Then for each combination over unknown IDs, override them.
+    # (In practice, we only need to vary the unknown ones.)
+    valid_assignments = []
+    for bits in product([0, 1], repeat=len(all_unknown_ids)):
+        proposal = dict(health_states)  # copy current states
+        # Overwrite unknown IDs with bits
+        conflict = False
+        for i, a_id in enumerate(all_unknown_ids):
+            if a_id in negAgents and bits[i] == 1:
+                conflict = True
                 break
-    else:
-        burn_in = max_iterations  # No convergence detected, use max iterations
+            proposal[a_id] = bits[i]
+        if conflict:
+            continue
 
-    # After burn-in, continue sampling to calculate probabilities and bootstrap for confidence intervals
-    post_burn_in_health_states = {agent[0]: [] for agent in unknownAgents}
-    total_samples = max(max_iterations - burn_in, burn_in)
-    for iteration in range(total_samples):
-        for agent in unknownAgents:
-            health_states[agent[0]] = update_agent_state(agent[0], agent_to_groups, health_states, agent[2], negAgents)
+        if is_valid(proposal):
+            valid_assignments.append(proposal)
 
-        # Record state for calculating probabilities and confidence intervals
-        for agent in unknownAgents:
-            if health_states[agent[0]] == 0:
-                healthy_counts[agent[0]] += 1
-            post_burn_in_health_states[agent[0]].append(health_states[agent[0]])
+    if not valid_assignments:
+        # No valid assignment => contradictory constraints
+        agentDict = {}
+        for (a_id, util, p_inf) in agents:
+            if a_id in negAgents:
+                agentDict[a_id] = (0, 1.0, (1.0, 1.0))
+            else:
+                agentDict[a_id] = (util, 1 - p_inf, (1 - p_inf, 1 - p_inf))
+        return agentDict
 
-    # Calculate the final probabilities using the original count method
-    final_probs = {agent[0]: healthy_counts[agent[0]] / total_samples for agent in unknownAgents}
+    # Precompute weights
+    assignment_list = []
+    weights = []
+    for a in valid_assignments:
+        w = assignment_weight(a)
+        assignment_list.append(a)
+        weights.append(w)
 
-    # Calculate bootstrap confidence intervals using post-burn-in health samples
+    weights = np.array(weights, dtype=float)
+    if weights.sum() == 0.0:
+        # fallback to uniform if product-of-priors is zero everywhere
+        weights = np.ones_like(weights)
+    weights /= weights.sum()
+
+    def sample_assignment():
+        idx = np.random.choice(len(assignment_list), p=weights)
+        return assignment_list[idx]
+
+    # ------------------------------------------------------------
+    # 3) Rolling window structures
+    # ------------------------------------------------------------
+    # We'll do up to max_iterations for burn-in, each iteration sampling
+    # a new assignment => store each agent's state in a rolling buffer.
+    health_history = {a_id: [] for a_id in all_unknown_ids}
+
+    # ------------------------------------------------------------
+    # 4) Burn-in with rolling window convergence check
+    # ------------------------------------------------------------
+    converged_iteration = max_iterations  # if we never break
+    for iteration in range(max_iterations):
+        # Sample a global assignment from the valid distribution
+        chosen = sample_assignment()
+        # Update our health_states with that assignment
+        # (In principle, the forced-healthy or unaffected agents remain as they are, but let's keep them consistent.)
+        for a_id in chosen:
+            health_states[a_id] = chosen[a_id]
+
+        # Update rolling windows
+        for a_id in all_unknown_ids:
+            h = health_history[a_id]
+            h.append(health_states[a_id])
+            if len(h) > window_size:
+                h.pop(0)
+
+        # Check convergence if iteration > min_burn_in
+        if iteration > min_burn_in:
+            # We'll see if all unknown agents are stable
+            stable = True
+            for a_id in all_unknown_ids:
+                h = health_history[a_id]
+                if len(h) >= window_size:
+                    avg_full = np.mean(h)
+                    avg_half = np.mean(h[-(window_size//2):])
+                    if abs(avg_full - avg_half) > tolerance:
+                        stable = False
+                        break
+            if stable:
+                converged_iteration = iteration
+                break
+
+    # That means `converged_iteration` is effectively our "burn_in".
+    burn_in = converged_iteration
+
+    # ------------------------------------------------------------
+    # 5) Post-Burn-in sampling
+    # ------------------------------------------------------------
+    # We'll collect at least the same number of samples as burn_in or (max_iterations - burn_in)
+    # like your original code
+    n_post_samples = max(max_iterations - burn_in, burn_in)
+
+    # We'll track for each agent how many times it's healthy
+    healthy_counts = {a_id: 0 for a_id in all_unknown_ids}
+    post_assignments = {a_id: [] for a_id in all_unknown_ids}
+
+    for _ in range(n_post_samples):
+        chosen = sample_assignment()
+        for a_id in chosen:
+            health_states[a_id] = chosen[a_id]
+
+        # Record each unknown agent's state
+        for a_id in all_unknown_ids:
+            if health_states[a_id] == 0:
+                healthy_counts[a_id] += 1
+            post_assignments[a_id].append(health_states[a_id])
+
+    # Probability(healthy) for unknown agents
+    final_probs = {
+        a_id: healthy_counts[a_id] / n_post_samples
+        for a_id in all_unknown_ids
+    }
+
+    # ------------------------------------------------------------
+    # 6) Bootstrap confidence intervals
+    # ------------------------------------------------------------
     ci_intervals = {}
-    for agent in agents:
-        agent_id = agent[0]
-        if agent_id in negAgents:
-            ci_intervals[agent_id] = (1.0, 1.0)  # Always healthy
-        elif agent_id in unknownAgentIDs:
-            # Bootstrap to calculate confidence intervals for P(healthy) = 1 - P(infected)
-            health_samples = np.array(post_burn_in_health_states[agent_id])
-            prob_samples = [1 - np.mean(np.random.choice(health_samples, size=len(health_samples), replace=True)) for _ in range(n_bootstrap)]
-            lower_bound = np.percentile(prob_samples, (1 - confidence_level) / 2 * 100)
-            upper_bound = np.percentile(prob_samples, (1 + confidence_level) / 2 * 100)
-            ci_intervals[agent_id] = (lower_bound, upper_bound)
-        else: 
-            ci_intervals[agent_id] = (agent[2], agent[2])
+    for (a_id, util, p_inf) in agents:
+        if a_id in negAgents:
+            ci_intervals[a_id] = (1.0, 1.0)
+        elif a_id in all_unknown_ids:
+            arr = np.array(post_assignments[a_id], dtype=int)  # 0=healthy,1=infected
+            # We'll interpret P(healthy) = fraction of 0
+            # => infected fraction = arr.mean(), so healthy fraction = 1 - that
+            def sample_p_healthy():
+                b = np.random.choice(arr, size=len(arr), replace=True)
+                return 1 - b.mean()
 
-    # Prepare the agentDict to return, setting utility to 0 for negAgents
-    agentDict = {}
-    for agent in agents:
-        agent_id = agent[0]
-        if agent_id in negAgents:
-            agentDict[agent_id] = (0, 1, (1.0, 1.0))  # Utility is 0, always healthy, confidence interval at (1.0, 1.0)
-        elif agent_id in unknownAgentIDs:
-            agentDict[agent_id] = (agent[1], final_probs[agent_id], ci_intervals[agent_id])  # Utility remains the same, update health probability and confidence interval
+            reps = [sample_p_healthy() for _ in range(n_bootstrap)]
+            lower = np.percentile(reps, (1 - confidence_level)/2*100)
+            upper = np.percentile(reps, (1 + confidence_level)/2*100)
+            ci_intervals[a_id] = (lower, upper)
         else:
-            agentDict[agent_id] = (agent[1], agent[2], ci_intervals[agent_id])
+            # Agents not in posGroups => no new info => keep prior as both ends
+            ci_intervals[a_id] = (p_inf, p_inf)
+
+    # ------------------------------------------------------------
+    # 7) Prepare final agentDict
+    # ------------------------------------------------------------
+    agentDict = {}
+    for (a_id, util, p_inf) in agents:
+        if a_id in negAgents:
+            agentDict[a_id] = (0, 1.0, (1.0, 1.0))
+        elif a_id in all_unknown_ids:
+            agentDict[a_id] = (util, final_probs[a_id], ci_intervals[a_id])
+        else:
+            agentDict[a_id] = (util, p_inf, ci_intervals[a_id])
 
     return agentDict
-    
+
 def solveStaticOverlap(agents, G = G, B = B):
 
   def generate_overlapping_subsets(agents, G, B):
@@ -845,130 +978,42 @@ def analyzeTreeSample(tree, agents, confidence_level=0.95, bootstrap_samples=100
 # #### Training Model
 ### adapted from https://github.com/edwinlock/csef/tree/main/optimisation/python
 
-def solveConicGibbsGreedyDynamic(agents, G = G, B = B, posGroups = frozenset(), negAgents = frozenset(), CI = False, confidence_level=0.95):
+# utility values erroneous from Gibs sampling and only using marginal probabilities
+def solveConicGibbsGreedyDynamicCount(agents, G = G, B = B, healthStatus = None):
 
   if B == 0:
-    if CI:
-      return [], 0, (0, 0)
+    return [], 0
+  
+  if not healthStatus:
+    healthStatus = [1 if random.random() < health else 0 for (_, _, health) in agents]
+
+  posGroups = []
+  negAgents = set()
+
+  for i in range(B, 0, -1):
+    agentDict = GibbsMCMCWindowCount(agents, posGroups, negAgents)
+    updatedAgents = [(id, utility, health) for id, (utility, health, _) in agentDict.items()]
+    firstTest, _ = solveConicSingle(updatedAgents, G=G)
+    firstIDs = frozenset({person[0] for person in firstTest})
+    posCount = sum(not healthStatus[id] for (id, _, _) in agents if id in firstIDs)
+    if posCount == 0:
+      negAgents.update(firstIDs)
     else:
-        return [], 0
+      posGroups.append((firstIDs, posCount))
 
-  agentDict = GibbsMCMCWindow(agents, posGroups, negAgents, confidence_level=confidence_level) 
+  utility = sum(util for (id, util, _) in agents if id in negAgents)
 
-  updatedAgents = [(id, utility, health, bounds) for id, (utility, health, bounds) in agentDict.items()]
+  return utility
 
-  firstTest, _ = solveConicSingle(updatedAgents, G=G)
-
-  agentDict = GibbsMCMCWindow(agents, posGroups, negAgents, confidence_level=confidence_level) 
-
-  utility = 0
-
-  if CI: 
-    lowUtility = 0
-    highUtility = 0
-
-  firstUtility = 0
-  firstHealthy = 1
-
-  if CI: 
-    lowFirstHealthy = 1
-    highFirstHealthy = 1
-
-  firstIDs = frozenset({person[0] for person in firstTest})
-
-  remaining = [person for person in agents if person[0] not in firstIDs]
-
-  if posGroups:
-    for posGroup in posGroups:
-      if posGroup.issubset(firstIDs):
-        firstHealthy = 0
-  else:
-    posGroups = frozenset()
-
-  for person in firstIDs:
-    firstUtility += agentDict[person][0]
-    firstHealthy *= agentDict[person][1]
-
-    if CI: 
-      lowFirstHealthy *= agentDict[person][2][0]
-      highFirstHealthy *= agentDict[person][2][1]
-
-  utility += firstUtility * firstHealthy
-
-  if CI: 
-    lowUtility += firstUtility * lowFirstHealthy
-    highUtility += firstUtility * highFirstHealthy
-
-  # positive scenario
-  if firstHealthy < 1:
-
-    newPosGroups = set(posGroups.copy())
-    newPosGroups.add(firstIDs.difference(negAgents))
-
-    if CI:
-
-      posStrategy, posUtility, (lowPosUtility, highPosUtility) = solveConicGibbsGreedyDynamic(agents, G, B-1, frozenset(newPosGroups), frozenset(negAgents), CI, confidence_level=confidence_level)
-
-    else:
-
-      posStrategy, posUtility = solveConicGibbsGreedyDynamic(agents, G, B-1, frozenset(newPosGroups), frozenset(negAgents), CI)
-
-    utility += (1 - firstHealthy) * posUtility
-
-    if CI:
-
-      lowUtility += (1 - firstHealthy) * lowPosUtility
-      highUtility += (1 - firstHealthy) * highPosUtility
-
-  else:
-
-    posStrategy = []
-
-  # negative scenario
-
-  if remaining and firstHealthy > 0:
-    newPosGroups = set()
-    for posGroup in posGroups:
-      newPosGroups.add(posGroup.difference(firstIDs))
-
-    newNegAgents = set(negAgents.copy())
-    newNegAgents.update(firstIDs)
-
-    if CI:
-
-      negStrategy, negUtility, (lowNegUtility, highNegUtility) = solveConicGibbsGreedyDynamic(remaining, G, B-1, frozenset(newPosGroups), frozenset(newNegAgents), CI, confidence_level=confidence_level)
-
-    else:
-
-      negStrategy, negUtility = solveConicGibbsGreedyDynamic(remaining, G, B-1, frozenset(newPosGroups), frozenset(newNegAgents), CI)
-
-    utility += firstHealthy * negUtility
-
-    if CI:
-
-      lowUtility += firstHealthy * lowNegUtility
-      highUtility += firstHealthy * highNegUtility
-
-  else:
-
-    negStrategy = []
-
-  strategy = (tuple(firstTest), tuple(posStrategy), tuple(negStrategy))
-
-  if CI:
-    return strategy, utility, (lowUtility, highUtility)
-  else:
-    return strategy, utility
-
-Gvals = [5]
+Gvals = [3]
 Bvals = [5]
 
 for G in Gvals:
   for B in Bvals:
-    file_path = f"data_N50_d2_B{B}_G{G}_Utils3.csv"
+    file_path = f"sample_N50_d2_B{B}_G{G}_Utils3.csv"
     df = pd.read_csv(file_path)
 
-    function = solveConicGibbsGreedyDynamic
+    function = solveConicGibbsGreedyDynamicCount
 
     tqdm.pandas()
 
@@ -986,8 +1031,8 @@ for G in Gvals:
     output_column = function.__name__
 
     def process_row(i, agent_data, healthStatus):
-        tree, _ = function(agent_data, G=G, B=B) # type: ignore
-        return i, analyzeTree(tree, agent_data) # type: ignore
+        val = function(agent_data, G=G, B=B, healthStatus=healthStatus) # type: ignore
+        return i, val # type: ignore
         # return i, analyzeTreeSample(generate_binary_tree(tree), agent_data, max_samples=1, unWeight=True, healthStatus=healthStatus)[3] # type: ignore
 
     batch_size = 10
